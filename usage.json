@@ -1,0 +1,25 @@
+{
+  "today": {
+    "tokens": 660419535,
+    "input": 2326,
+    "output": 1312377,
+    "cacheRead": 649425705,
+    "cacheCreate": 9679127,
+    "messages": 1427,
+    "cost_usd": 250.82
+  },
+  "month": {
+    "tokens": 3060001373,
+    "input": 147815,
+    "output": 13501772,
+    "cacheRead": 2936980375,
+    "cacheCreate": 109371411,
+    "messages": 13593,
+    "cost_usd": 1494.21
+  },
+  "all": {
+    "tokens": 3060192748,
+    "cost_usd": 1494.43
+  },
+  "timestamp": "2026-05-17T21:29:48.513Z"
+}
