@@ -48,6 +48,31 @@ Top projetos
 - O script soma tudo, agrupa por data (do `timestamp` da linha) e por projeto
 - Preços são Sonnet 4.5 ($3 in / $15 out / $0.30 cache R / $3.75 cache W por 1M tokens) — edite `scripts/usage.js` se for outro modelo
 
+## Para o YellowBoard (ESP32) — Publicação no GitHub
+
+O firmware do board pode buscar dados de duas formas:
+
+**A) Cloud (recomendado, sempre online)** — `https://raw.githubusercontent.com/wgallego0/claude-token-monitor/data/usage.json`
+- Sua máquina publica snapshots a cada 5 min para o branch `data`
+- Board lê do GitHub raw 24/7
+- Quando seu PC está off, o board mostra o último snapshot (não erra)
+
+Setup do publish automático (Windows, **rode UMA vez como Admin**):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-scheduler.ps1
+```
+
+Cria a tarefa agendada `ClaudeTokenMonitorPublish` rodando `scripts/publish.bat` a cada 5 minutos. Logs em `%TEMP%\claude-token-publish.log`.
+
+Para publicar manualmente uma vez:
+```bash
+node scripts/usage.js --publish
+```
+
+**B) LAN (sem internet, depende do PC ligado)** — `http://<ip-do-pc>:9876/usage`
+- Rode o servidor: `node scripts/usage.js --serve 9876`
+- Board polla diretamente seu PC na rede local
+
 ## Flags
 
 ```bash

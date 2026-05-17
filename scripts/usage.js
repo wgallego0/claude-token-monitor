@@ -227,6 +227,60 @@ function serveJson() {
     };
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// --publish: commit data/usage.json and push, so a remote board can fetch
+// the snapshot from GitHub raw without depending on the host machine.
+//
+// Designed to run from a scheduled task (e.g. every 5 minutes). Idempotent
+// per content: if usage.json didn't change, the git commit fails (no diff)
+// and we just skip. Uses a dedicated `data` branch so main stays clean.
+// ──────────────────────────────────────────────────────────────────────────
+
+function publish(branch) {
+    const { execSync } = require("child_process");
+    const repoRoot = path.resolve(__dirname, "..");
+    const json     = JSON.stringify(serveJson(), null, 2);
+
+    const sh = (cmd, opts = {}) =>
+        execSync(cmd, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], ...opts })
+            .toString().trim();
+
+    // 1. Worktree on the data branch (avoids switching the user's current branch).
+    //    Reuses the user's git auth — no PAT needed.
+    const wt = path.join(os.tmpdir(), "claude-token-monitor-data-wt");
+    if (fs.existsSync(wt)) {
+        try { sh(`git worktree remove --force "${wt}"`); } catch {}
+        if (fs.existsSync(wt)) fs.rmSync(wt, { recursive: true, force: true });
+    }
+
+    try {
+        sh(`git fetch origin ${branch}`);
+        sh(`git worktree add "${wt}" origin/${branch}`);
+        sh(`git -C "${wt}" checkout -B ${branch}`);
+    } catch {
+        // Branch doesn't exist yet — create as orphan
+        sh(`git worktree add --detach "${wt}" HEAD`);
+        sh(`git -C "${wt}" checkout --orphan ${branch}`);
+        try { sh(`git -C "${wt}" rm -rf .`); } catch {}
+    }
+
+    // 2. Write the snapshot
+    fs.writeFileSync(path.join(wt, "usage.json"), json);
+
+    // 3. Commit only if content changed; push the new commit
+    try {
+        sh(`git -C "${wt}" add usage.json`);
+        sh(`git -C "${wt}" -c user.email=bot@claude-token-monitor -c user.name=token-monitor commit -m "data: snapshot ${new Date().toISOString()}"`);
+        sh(`git -C "${wt}" push origin ${branch}`);
+        console.log(`[publish] pushed snapshot to origin/${branch}`);
+    } catch (e) {
+        console.log(`[publish] no changes since last snapshot — skipped`);
+    }
+
+    // 4. Clean up worktree
+    try { sh(`git worktree remove --force "${wt}"`); } catch {}
+}
+
 function serve(port) {
     const http = require("http");
     const server = http.createServer((req, res) => {
@@ -257,10 +311,18 @@ function serve(port) {
 
 function main() {
     const args = process.argv.slice(2);
+
     const serveIdx = args.indexOf("--serve");
     if (serveIdx >= 0) {
         const port = parseInt(args[serveIdx + 1], 10) || 9876;
         return serve(port);
+    }
+
+    const pubIdx = args.indexOf("--publish");
+    if (pubIdx >= 0) {
+        const branch = args[pubIdx + 1] && !args[pubIdx + 1].startsWith("--")
+            ? args[pubIdx + 1] : "data";
+        return publish(branch);
     }
 
     const agg = aggregate();
