@@ -1,25 +1,43 @@
 {
+  "fiveh": {
+    "percent": 66,
+    "secondsLeft": 9566,
+    "status": "allowed",
+    "tokens": 178345249,
+    "cost_usd": 70.03,
+    "messages": 475
+  },
+  "week": {
+    "percent": 54,
+    "secondsLeft": 135566,
+    "status": "allowed",
+    "tokens": 2928897787,
+    "cost_usd": 1397.59,
+    "messages": 11151
+  },
+  "plan": {
+    "fallback_percentage": 0.5,
+    "fallback_status": "available",
+    "overage_status": "rejected",
+    "representative": "five_hour",
+    "sampled_at": "2026-05-17T22:20:34.960Z"
+  },
   "today": {
-    "tokens": 660419535,
-    "input": 2326,
-    "output": 1312377,
-    "cacheRead": 649425705,
-    "cacheCreate": 9679127,
-    "messages": 1427,
-    "cost_usd": 250.82
+    "tokens": 757270010,
+    "input": 2696,
+    "output": 1577502,
+    "cacheRead": 745631647,
+    "cacheCreate": 10058165,
+    "messages": 1637,
+    "cost_usd": 285.08
   },
   "month": {
-    "tokens": 3060001373,
-    "input": 147815,
-    "output": 13501772,
-    "cacheRead": 2936980375,
-    "cacheCreate": 109371411,
-    "messages": 13593,
-    "cost_usd": 1494.21
+    "tokens": 3156851848,
+    "cost_usd": 1528.47
   },
   "all": {
-    "tokens": 3060192748,
-    "cost_usd": 1494.43
+    "tokens": 3157043223,
+    "cost_usd": 1528.69
   },
-  "timestamp": "2026-05-17T21:29:48.513Z"
+  "timestamp": "2026-05-17T22:20:34.961Z"
 }
