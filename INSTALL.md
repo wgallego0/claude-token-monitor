@@ -4,9 +4,10 @@
 
 ```bash
 cd D:\PROJETOS\Wilton\claude-token-monitor
-git remote add origin https://github.com/<seu-user>/claude-token-monitor.git
+git remote add origin https://github.com/wgallego0/claude-token-monitor.git
 git branch -M main
 git push -u origin main
+# Repo já publicado em: https://github.com/wgallego0/claude-token-monitor
 ```
 
 (Crie o repo vazio em github.com/new antes do `git push`.)
@@ -20,7 +21,7 @@ claude /plugin install D:\PROJETOS\Wilton\claude-token-monitor
 
 Online (qualquer máquina, depois do push):
 ```bash
-claude /plugin install https://github.com/<seu-user>/claude-token-monitor
+claude /plugin install https://github.com/wgallego0/claude-token-monitor
 ```
 
 ## 3. Subir o servidor HTTP (para o YellowBoard ler)

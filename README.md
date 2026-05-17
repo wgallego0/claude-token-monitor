@@ -5,7 +5,7 @@ Plugin do Claude Code que mostra seu uso de tokens **lendo direto os arquivos lo
 ## Instalação
 
 ```bash
-claude /plugin install D:\PROJETOS\Wilton\claude-token-monitor
+claude /plugin install https://github.com/wgallego0/claude-token-monitor
 ```
 
 Ou via marketplace local — adicione o diretório como repo em `~/.claude/plugins`.
