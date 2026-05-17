@@ -1,0 +1,6 @@
+{
+  "name": "claude-token-monitor",
+  "version": "0.1.0",
+  "description": "Local Claude Code token usage monitor — reads ~/.claude/projects/*.jsonl. No API key needed.",
+  "author": "Wilton Gallego"
+}
