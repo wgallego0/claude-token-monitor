@@ -12,11 +12,110 @@
  *     node scripts/usage.js --today  # one-line: today's totals only
  */
 
-const fs   = require("fs");
-const path = require("path");
-const os   = require("os");
+const fs    = require("fs");
+const path  = require("path");
+const os    = require("os");
+const https = require("https");
 
 const PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
+const CREDS_PATH   = path.join(os.homedir(), ".claude", ".credentials.json");
+
+// ──────────────────────────────────────────────────────────────────────────
+// Anthropic plan-usage probe
+//
+// Claude Code's internal "5h / weekly" panel reads the unified rate-limit
+// headers that come back on every /v1/messages response. There's no dedicated
+// GET endpoint that returns the same numbers. So we make a 1-token request
+// (literally "1" → 1 output token) and parse the headers. Costs ~$0.00005 per
+// poll and gives us exactly the percentages and reset timestamps Anthropic's
+// backend computes.
+// ──────────────────────────────────────────────────────────────────────────
+
+let planCache       = null;        // last parsed plan-limits object
+let planCacheUntil  = 0;           // monotonic ms; refresh after this
+
+function readOauthToken() {
+    try {
+        const c = JSON.parse(fs.readFileSync(CREDS_PATH, "utf8"));
+        return c.claudeAiOauth?.accessToken || null;
+    } catch { return null; }
+}
+
+function probePlanLimits() {
+    return new Promise((resolve) => {
+        const token = readOauthToken();
+        if (!token) return resolve(null);
+
+        const body = JSON.stringify({
+            model: "claude-haiku-4-5",
+            max_tokens: 1,
+            messages: [{ role: "user", content: "1" }],
+        });
+
+        const req = https.request({
+            host: "api.anthropic.com",
+            port: 443,
+            path: "/v1/messages",
+            method: "POST",
+            headers: {
+                "Authorization":     `Bearer ${token}`,
+                "anthropic-version": "2023-06-01",
+                "anthropic-beta":    "oauth-2025-04-20",
+                "User-Agent":        "claude-token-monitor/0.2",
+                "Content-Type":      "application/json",
+            },
+            timeout: 12000,
+        }, (res) => {
+            // Drain body but only headers matter to us
+            res.on("data", () => {});
+            res.on("end", () => {
+                const h = res.headers;
+                const num = (k) => {
+                    const v = h[k];
+                    return v == null ? null : Number(v);
+                };
+                resolve({
+                    fiveh: {
+                        utilization:  num("anthropic-ratelimit-unified-5h-utilization"),
+                        resetEpoch:   num("anthropic-ratelimit-unified-5h-reset"),
+                        status:       h["anthropic-ratelimit-unified-5h-status"] || null,
+                    },
+                    week: {
+                        utilization:  num("anthropic-ratelimit-unified-7d-utilization"),
+                        resetEpoch:   num("anthropic-ratelimit-unified-7d-reset"),
+                        status:       h["anthropic-ratelimit-unified-7d-status"] || null,
+                    },
+                    fallback: {
+                        percentage:   num("anthropic-ratelimit-unified-fallback-percentage"),
+                        status:       h["anthropic-ratelimit-unified-fallback"] || null,
+                    },
+                    overage: {
+                        status:       h["anthropic-ratelimit-unified-overage-status"] || null,
+                        disabledReason: h["anthropic-ratelimit-unified-overage-disabled-reason"] || null,
+                    },
+                    representativeClaim: h["anthropic-ratelimit-unified-representative-claim"] || null,
+                    sampledAt:    new Date().toISOString(),
+                });
+            });
+        });
+        req.on("error",   () => resolve(null));
+        req.on("timeout", () => { req.destroy(); resolve(null); });
+        req.write(body);
+        req.end();
+    });
+}
+
+async function getPlanLimits() {
+    // Cache for 60s — we don't need to spam Anthropic
+    const now = Date.now();
+    if (planCache && now < planCacheUntil) return planCache;
+    const fresh = await probePlanLimits();
+    if (fresh) {
+        planCache      = fresh;
+        planCacheUntil = now + 60_000;
+    }
+    return fresh || planCache;
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Aggregation
@@ -192,7 +291,66 @@ function reportJson(agg) {
 // HTTP server (for the ESP32 YellowBoard to poll)
 // ──────────────────────────────────────────────────────────────────────────
 
-function serveJson() {
+// Default soft caps for the dashboard percentages — based on Claude Max plan
+// heavy-usage estimates. The user never has to type these; if they want
+// different thresholds they can set CLAUDE_LIMIT_5H / CLAUDE_LIMIT_WEEK env
+// vars. The firmware just renders whatever percentage the plugin computes.
+const LIMIT_5H   = parseInt(process.env.CLAUDE_LIMIT_5H   || "", 10) || 500_000_000;    // 500M tokens / 5h
+const LIMIT_WEEK = parseInt(process.env.CLAUDE_LIMIT_WEEK || "", 10) || 3_000_000_000;  // 3B tokens / week
+
+// Reset-time calculators (returns seconds until the rolling window slides out)
+function secondsUntilNext5hBoundary() {
+    // 5h windows reset on the hour boundary at the next multiple of 5 hours
+    // (UTC). Simpler model: time-since-oldest-event-in-window. We just use a
+    // sliding 5-hour reset estimate based on "now" — good enough for the UI.
+    return 5 * 3600;  // always show "reinicia em 5h" — the rolling window has no hard reset
+}
+function secondsUntilEndOfWeek() {
+    const now = new Date();
+    // Week reset Monday 00:00 UTC
+    const day = now.getUTCDay(); // 0 = Sunday
+    const daysToMon = (day === 0 ? 1 : 8 - day);
+    const next = new Date(Date.UTC(
+        now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysToMon, 0, 0, 0));
+    return Math.floor((next - now) / 1000);
+}
+
+// Walks raw JSONL events (instead of pre-aggregated date buckets) so we can
+// compute true rolling windows like "last 5 hours" rather than "today".
+function rollingBuckets() {
+    const now = Date.now();
+    const fiveHoursAgo  = now - 5 * 3600 * 1000;
+    const sevenDaysAgo  = now - 7 * 86400 * 1000;
+    const last5h = emptyBucket();
+    const week   = emptyBucket();
+
+    for (const { file } of iterSessionFiles()) {
+        let content;
+        try { content = fs.readFileSync(file, "utf8"); } catch { continue; }
+        for (const line of content.split("\n")) {
+            if (!line.trim()) continue;
+            let obj;
+            try { obj = JSON.parse(line); } catch { continue; }
+            const usage = obj?.message?.usage;
+            if (!usage || !obj.timestamp) continue;
+            const t = Date.parse(obj.timestamp);
+            if (isNaN(t)) continue;
+
+            const entry = {
+                input:       usage.input_tokens                || 0,
+                output:      usage.output_tokens               || 0,
+                cacheRead:   usage.cache_read_input_tokens     || 0,
+                cacheCreate: usage.cache_creation_input_tokens || 0,
+                messages:    1,
+            };
+            if (t >= fiveHoursAgo) addInto(last5h, entry);
+            if (t >= sevenDaysAgo) addInto(week,   entry);
+        }
+    }
+    return { last5h, week };
+}
+
+async function serveJson() {
     const today  = new Date().toISOString().slice(0, 10);
     const month  = today.slice(0, 7);
     const agg    = aggregate();
@@ -200,7 +358,46 @@ function serveJson() {
     const monthB = emptyBucket();
     for (const [d, u] of agg.byDate) if (d.startsWith(month)) addInto(monthB, u);
 
+    const { last5h, week } = rollingBuckets();
+    const fivehTokens = sum(last5h);
+    const weekTokens  = sum(week);
+    const pct = (used, lim) => lim > 0 ? Math.min(100, used / lim * 100) : 0;
+
+    // Real plan limits from Anthropic's unified rate-limit headers (matches
+    // exactly what Claude Code's internal /usage panel shows). Cached 60s.
+    const plan = await getPlanLimits();
+    const planFiveh =  plan?.fiveh?.utilization != null ? plan.fiveh.utilization * 100 : null;
+    const planWeek  =  plan?.week?.utilization  != null ? plan.week.utilization  * 100 : null;
+    const nowSec = Math.floor(Date.now() / 1000);
+
     return {
+        // ─── Obsidian-style buckets — using REAL plan utilization from API ─
+        fiveh: {
+            // Anthropic-supplied numbers (authoritative, model-weighted)
+            percent:     planFiveh != null ? +planFiveh.toFixed(1) : +pct(fivehTokens, LIMIT_5H).toFixed(1),
+            secondsLeft: plan?.fiveh?.resetEpoch ? Math.max(0, plan.fiveh.resetEpoch - nowSec) : secondsUntilNext5hBoundary(),
+            status:      plan?.fiveh?.status || null,
+            // Local-derived (machine activity only — for reference)
+            tokens:      fivehTokens,
+            cost_usd:    Number(fmtCost(last5h).slice(1)),
+            messages:    last5h.messages,
+        },
+        week: {
+            percent:     planWeek != null ? +planWeek.toFixed(1) : +pct(weekTokens, LIMIT_WEEK).toFixed(1),
+            secondsLeft: plan?.week?.resetEpoch ? Math.max(0, plan.week.resetEpoch - nowSec) : secondsUntilEndOfWeek(),
+            status:      plan?.week?.status || null,
+            tokens:      weekTokens,
+            cost_usd:    Number(fmtCost(week).slice(1)),
+            messages:    week.messages,
+        },
+        plan: plan ? {
+            fallback_percentage: plan.fallback?.percentage,
+            fallback_status:     plan.fallback?.status,
+            overage_status:      plan.overage?.status,
+            representative:      plan.representativeClaim,
+            sampled_at:          plan.sampledAt,
+        } : null,
+        // ─── Legacy buckets (kept for backwards compat with older firmware) ──
         today: {
             tokens:      sum(todayB),
             input:       todayB.input,
@@ -212,11 +409,6 @@ function serveJson() {
         },
         month: {
             tokens:      sum(monthB),
-            input:       monthB.input,
-            output:      monthB.output,
-            cacheRead:   monthB.cacheRead,
-            cacheCreate: monthB.cacheCreate,
-            messages:    monthB.messages,
             cost_usd:    Number(fmtCost(monthB).slice(1)),
         },
         all: {
@@ -236,10 +428,10 @@ function serveJson() {
 // and we just skip. Uses a dedicated `data` branch so main stays clean.
 // ──────────────────────────────────────────────────────────────────────────
 
-function publish(branch) {
+async function publish(branch) {
     const { execSync } = require("child_process");
     const repoRoot = path.resolve(__dirname, "..");
-    const json     = JSON.stringify(serveJson(), null, 2);
+    const json     = JSON.stringify(await serveJson(), null, 2);
 
     const sh = (cmd, opts = {}) =>
         execSync(cmd, { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], ...opts })
@@ -283,15 +475,20 @@ function publish(branch) {
 
 function serve(port) {
     const http = require("http");
-    const server = http.createServer((req, res) => {
+    const server = http.createServer(async (req, res) => {
         if (req.method === "GET" && (req.url === "/usage" || req.url === "/usage/")) {
-            const payload = JSON.stringify(serveJson());
-            res.writeHead(200, {
-                "Content-Type":                "application/json",
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control":               "no-store",
-            });
-            res.end(payload);
+            try {
+                const payload = JSON.stringify(await serveJson());
+                res.writeHead(200, {
+                    "Content-Type":                "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control":               "no-store",
+                });
+                res.end(payload);
+            } catch (e) {
+                res.writeHead(500, { "Content-Type": "text/plain" });
+                res.end("error: " + e.message);
+            }
         } else if (req.url === "/health" || req.url === "/") {
             res.writeHead(200, { "Content-Type": "text/plain" });
             res.end("claude-token-monitor OK\n");
