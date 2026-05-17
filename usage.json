@@ -1,15 +1,15 @@
 {
   "fiveh": {
-    "percent": 66,
-    "secondsLeft": 9521,
+    "percent": 80,
+    "secondsLeft": 6854,
     "status": "allowed",
     "tokens": 181100021,
     "cost_usd": 70.91,
     "messages": 480
   },
   "week": {
-    "percent": 54,
-    "secondsLeft": 135521,
+    "percent": 56,
+    "secondsLeft": 132854,
     "status": "allowed",
     "tokens": 2931652559,
     "cost_usd": 1398.47,
@@ -20,7 +20,7 @@
     "fallback_status": "available",
     "overage_status": "rejected",
     "representative": "five_hour",
-    "sampled_at": "2026-05-17T22:21:19.349Z"
+    "sampled_at": "2026-05-17T23:05:46.470Z"
   },
   "today": {
     "tokens": 760024782,
@@ -39,5 +39,5 @@
     "tokens": 3159797995,
     "cost_usd": 1529.57
   },
-  "timestamp": "2026-05-17T22:21:19.350Z"
+  "timestamp": "2026-05-17T23:05:46.471Z"
 }
