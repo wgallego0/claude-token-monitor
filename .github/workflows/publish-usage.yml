@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       payload:
-        description: 'JSON snapshot from local machine (leave empty to probe via ANTHROPIC_OAUTH_TOKEN)'
+        description: 'JSON snapshot da máquina local (opcional — deixe vazio para probe autônomo)'
         required: false
         type: string
 
