@@ -20,7 +20,7 @@
     "fallback_status": null,
     "overage_status": null,
     "representative": null,
-    "sampled_at": "2026-05-18T04:48:13.232Z"
+    "sampled_at": "2026-05-18T08:39:08.744Z"
   },
   "today": {
     "tokens": 760024782,
@@ -39,5 +39,5 @@
     "tokens": 3159797995,
     "cost_usd": 1529.57
   },
-  "timestamp": "2026-05-18T04:48:13.233Z"
+  "timestamp": "2026-05-18T08:39:08.745Z"
 }
