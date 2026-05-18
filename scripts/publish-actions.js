@@ -58,9 +58,25 @@ function probePlanLimits(token) {
         "Content-Type": "application/json",
       }, timeout: 12000,
     }, (res) => {
-      res.on("data", () => {});
+      let respBody = "";
+      res.on("data", c => respBody += c);
       res.on("end", () => {
+        console.log(`[probe] HTTP ${res.statusCode}`);
+
+        // Non-200 = hard failure (most often 401 = expired OAuth token).
+        // Don't commit a stale snapshot — the run should fail visibly so
+        // the user knows to refresh the ANTHROPIC_OAUTH_TOKEN secret.
+        if (res.statusCode !== 200) {
+          console.log(`[probe] body: ${respBody.slice(0, 300)}`);
+          return resolve({ _failed: true, _status: res.statusCode, _body: respBody.slice(0, 300) });
+        }
+
         const h = res.headers;
+        if (h["anthropic-ratelimit-unified-5h-utilization"] == null) {
+          console.log("[probe] 200 but no rate-limit headers — token missing user:inference scope?");
+          return resolve({ _failed: true, _status: 200, _body: "missing rate-limit headers" });
+        }
+
         const num = k => { const v = h[k]; return v == null ? null : Number(v); };
         resolve({
           fiveh: { utilization: num("anthropic-ratelimit-unified-5h-utilization"), resetEpoch: num("anthropic-ratelimit-unified-5h-reset"), status: h["anthropic-ratelimit-unified-5h-status"] || null },
@@ -72,8 +88,8 @@ function probePlanLimits(token) {
         });
       });
     });
-    req.on("error", () => resolve(null));
-    req.on("timeout", () => { req.destroy(); resolve(null); });
+    req.on("error",   e => { console.log(`[probe] net err: ${e.message}`); resolve({ _failed: true, _error: e.message }); });
+    req.on("timeout", () => { req.destroy(); console.log("[probe] timeout"); resolve({ _failed: true, _error: "timeout" }); });
     req.write(body); req.end();
   });
 }
@@ -107,9 +123,17 @@ async function main() {
     const prev = readCurrentSnapshot() || {};
     const plan  = await probePlanLimits(oauthToken);
 
-    if (!plan) {
-      console.log("[actions] probe falhou (token expirado?) — skipped");
-      process.exit(0);
+    if (!plan || plan._failed) {
+      const reason = plan?._status === 401 ? "OAuth token expirado — atualize o secret ANTHROPIC_OAUTH_TOKEN"
+                   : plan?._status === 403 ? "OAuth token sem permissão"
+                   : plan?._status        ? `HTTP ${plan._status}`
+                   : plan?._error         ? `network: ${plan._error}`
+                   :                        "probe falhou";
+      console.log(`::error::publish-actions: ${reason}`);
+      if (plan?._body) console.log(`details: ${plan._body}`);
+      // Fail the workflow so the user SEES it in GitHub Actions UI instead of
+      // a silent green checkmark with stale data on the dashboard.
+      process.exit(1);
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
