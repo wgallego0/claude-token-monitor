@@ -30,6 +30,9 @@ jobs:
 
       - name: Publish snapshot
         env:
-          ANTHROPIC_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
-          INPUT_PAYLOAD: ${{ inputs.payload }}
+          # Preferido: refresh token (vida útil ~meses, auto-refresh a cada run)
+          ANTHROPIC_REFRESH_TOKEN: ${{ secrets.ANTHROPIC_REFRESH_TOKEN }}
+          # Legado: access token direto (~1h, precisa atualizar manual)
+          ANTHROPIC_OAUTH_TOKEN:   ${{ secrets.ANTHROPIC_OAUTH_TOKEN }}
+          INPUT_PAYLOAD:           ${{ inputs.payload }}
         run: node scripts/publish-actions.js

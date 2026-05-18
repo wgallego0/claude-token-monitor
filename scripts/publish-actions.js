@@ -3,9 +3,11 @@
  * publish-actions.js — executado pelo GitHub Actions workflow.
  *
  * Modos (em ordem de prioridade):
- *   1. INPUT_PAYLOAD definido  → grava esse JSON diretamente (push da máquina local)
- *   2. ANTHROPIC_OAUTH_TOKEN   → probe autônomo: atualiza plan/% e preserva tokens
- *   3. Nenhum                  → skip
+ *   1. INPUT_PAYLOAD definido       → grava esse JSON diretamente (push local)
+ *   2. ANTHROPIC_REFRESH_TOKEN      → troca por access token fresco a cada run,
+ *                                      depois faz o probe (recomendado)
+ *   3. ANTHROPIC_OAUTH_TOKEN        → probe direto (token expira em ~1h)
+ *   4. Nenhum                       → skip
  */
 const fs    = require("fs");
 const path  = require("path");
@@ -41,6 +43,77 @@ function commitAndPush(json) {
   } catch {
     console.log("[actions] sem mudanças — skipped");
   }
+}
+
+// ── Refresh access token from refresh token ────────────────────────────────
+//
+// Anthropic's Claude Code OAuth uses a standard OAuth 2 refresh flow. The
+// access token lives ~1h; the refresh token lives much longer. By only
+// storing the refresh token as a GitHub secret and exchanging it for a
+// fresh access token at the start of every workflow run, we never persist
+// (or need to manually rotate) a short-lived access token.
+//
+// CLAUDE_CODE_CLIENT_ID is the public OAuth client_id Claude Code itself
+// presents to Anthropic during interactive login — it isn't a secret.
+const CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+function refreshAccessToken(refreshToken) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      grant_type:    "refresh_token",
+      refresh_token: refreshToken,
+      client_id:     CLAUDE_CODE_CLIENT_ID,
+    });
+
+    // Try the most-likely token endpoint first; if it 404s we fall through
+    // to alternates. The set is small and known — no fishing.
+    const candidates = [
+      ["console.anthropic.com", "/v1/oauth/token"],
+      ["api.anthropic.com",     "/api/oauth/token"],
+      ["api.anthropic.com",     "/oauth/token"],
+    ];
+
+    let attempt = 0;
+    const tryNext = () => {
+      if (attempt >= candidates.length) {
+        return resolve({ _failed: true, _reason: "all candidate endpoints failed" });
+      }
+      const [host, p] = candidates[attempt++];
+      const req = https.request({
+        host, port: 443, path: p, method: "POST",
+        headers: {
+          "Content-Type":   "application/json",
+          "User-Agent":     "claude-token-monitor/0.2",
+          "anthropic-beta": "oauth-2025-04-20",
+          "Content-Length": Buffer.byteLength(body),
+        }, timeout: 10000,
+      }, (res) => {
+        let buf = ""; res.on("data", c => buf += c);
+        res.on("end", () => {
+          console.log(`[refresh] POST https://${host}${p} → HTTP ${res.statusCode}`);
+          if (res.statusCode === 200) {
+            try {
+              const j = JSON.parse(buf);
+              if (j.access_token) return resolve({ accessToken: j.access_token, expiresIn: j.expires_in });
+              return resolve({ _failed: true, _reason: "200 but no access_token in body", _body: buf.slice(0, 200) });
+            } catch (e) {
+              return resolve({ _failed: true, _reason: "JSON parse: " + e.message, _body: buf.slice(0, 200) });
+            }
+          }
+          if (res.statusCode === 404 || res.statusCode === 405) {
+            tryNext();
+            return;
+          }
+          // Other HTTP codes are real failures (401 = refresh token rejected)
+          resolve({ _failed: true, _status: res.statusCode, _body: buf.slice(0, 300) });
+        });
+      });
+      req.on("error",   e => { console.log(`[refresh] net err on ${host}${p}: ${e.message}`); tryNext(); });
+      req.on("timeout", () => { req.destroy(); console.log(`[refresh] timeout on ${host}${p}`); tryNext(); });
+      req.write(body); req.end();
+    };
+    tryNext();
+  });
 }
 
 // ── Probe Anthropic rate-limit headers ─────────────────────────────────────
@@ -104,8 +177,9 @@ function readCurrentSnapshot() {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const payload    = (process.env.INPUT_PAYLOAD || "").trim();
-  const oauthToken = (process.env.ANTHROPIC_OAUTH_TOKEN || "").trim();
+  const payload      = (process.env.INPUT_PAYLOAD          || "").trim();
+  const refreshToken = (process.env.ANTHROPIC_REFRESH_TOKEN || "").trim();
+  let   oauthToken   = (process.env.ANTHROPIC_OAUTH_TOKEN  || "").trim();
 
   // Modo 1: payload da máquina local
   if (payload) {
@@ -115,7 +189,23 @@ async function main() {
     return;
   }
 
-  // Modo 2: probe autônomo
+  // Modo 2: refresh token → access token fresco a cada run
+  if (refreshToken) {
+    console.log("[actions] modo: refresh token");
+    const r = await refreshAccessToken(refreshToken);
+    if (r._failed) {
+      const reason = r._status === 401
+          ? "refresh token rejeitado — atualize o secret ANTHROPIC_REFRESH_TOKEN com um valor fresco do .credentials.json local"
+          : (r._reason || `HTTP ${r._status}`);
+      console.log(`::error::publish-actions: refresh falhou — ${reason}`);
+      if (r._body) console.log(`details: ${r._body}`);
+      process.exit(1);
+    }
+    console.log(`[actions] novo access token (expira em ${r.expiresIn}s)`);
+    oauthToken = r.accessToken;
+  }
+
+  // Modo 3: probe autônomo
   if (oauthToken) {
     console.log("[actions] modo: probe autônomo");
     switchToDataBranch();
