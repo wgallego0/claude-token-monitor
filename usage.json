@@ -1,7 +1,7 @@
 {
   "fiveh": {
-    "percent": 89,
-    "secondsLeft": 1287,
+    "percent": 0,
+    "secondsLeft": 15371,
     "status": "allowed",
     "tokens": 181100021,
     "cost_usd": 70.91,
@@ -9,7 +9,7 @@
   },
   "week": {
     "percent": 57,
-    "secondsLeft": 127287,
+    "secondsLeft": 123371,
     "status": "allowed",
     "tokens": 2931652559,
     "cost_usd": 1398.47,
@@ -17,10 +17,10 @@
   },
   "plan": {
     "fallback_percentage": 0.5,
-    "fallback_status": "available",
+    "fallback_status": null,
     "overage_status": "rejected",
     "representative": "five_hour",
-    "sampled_at": "2026-05-18T00:38:33.579Z"
+    "sampled_at": "2026-05-18T01:43:49.760Z"
   },
   "today": {
     "tokens": 760024782,
@@ -39,5 +39,5 @@
     "tokens": 3159797995,
     "cost_usd": 1529.57
   },
-  "timestamp": "2026-05-18T00:38:33.580Z"
+  "timestamp": "2026-05-18T01:43:49.761Z"
 }
