@@ -6,12 +6,15 @@ on:
   workflow_dispatch:
     inputs:
       payload:
-        description: 'JSON snapshot da máquina local (opcional — deixe vazio para probe autônomo)'
+        description: 'JSON snapshot da máquina local (opcional)'
         required: false
         type: string
 
 permissions:
   contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   publish:
@@ -23,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Publish snapshot
         env:
